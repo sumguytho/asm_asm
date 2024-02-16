@@ -141,6 +141,11 @@ public class InsnList implements Iterable<AbstractInsnNode> {
   public void accept(final MethodVisitor methodVisitor) {
     AbstractInsnNode currentInsn = firstInsn;
     while (currentInsn != null) {
+    	// spiral
+    	if (currentInsn.getType() == AbstractInsnNode.FRAME) {
+    		FrameNode frame = (FrameNode)currentInsn;
+        	System.out.println(String.format("    visiting frame, type=%d", frame.type));
+    	}
       currentInsn.accept(methodVisitor);
       currentInsn = currentInsn.nextInsn;
     }

@@ -776,15 +776,21 @@ final class MethodWriter extends MethodVisitor {
       }
       visitFrameEnd();
     } else {
-      if (symbolTable.getMajorVersion() < Opcodes.V1_6) {
-        throw new IllegalArgumentException("Class versions V1_5 or less must use F_NEW frames.");
-      }
+      // spiral
+      // why should they?
+      // if (symbolTable.getMajorVersion() < Opcodes.V1_6) {
+        // throw new IllegalArgumentException("Class versions V1_5 or less must use F_NEW frames.");
+      // }
+      // UPDATE from the future, I think I know now, it's because StackMapTable was added in java 6 (50.0)
+      // although the pcode uses those in spite of its version being 49.0
       int offsetDelta;
       if (stackMapTableEntries == null) {
         stackMapTableEntries = new ByteVector();
         offsetDelta = code.length;
       } else {
-        offsetDelta = code.length - previousFrameOffset - 1;
+        // offsetDelta = code.length - previousFrameOffset - 1;
+    	  // spiral
+    	  offsetDelta = (code.length - previousFrameOffset - 1) & 0xffff;
         if (offsetDelta < 0) {
           if (type == Opcodes.F_SAME) {
             return;
