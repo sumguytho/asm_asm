@@ -502,6 +502,9 @@ public class ClassReader {
     // - The non standard attributes (linked with their {@link Attribute#nextAttribute} field).
     //   This list in the <i>reverse order</i> or their order in the ClassFile structure.
     Attribute attributes = null;
+    
+    // spiral
+    DeobfuscationContext deobfuscationContext = new DeobfuscationContext();
 
     int currentAttributeOffset = getFirstAttributeOffset();
     for (int i = readUnsignedShort(currentAttributeOffset - 2); i > 0; --i) {
@@ -509,6 +512,10 @@ public class ClassReader {
       String attributeName = readUTF8(currentAttributeOffset, charBuffer);
       int attributeLength = readInt(currentAttributeOffset + 2);
       currentAttributeOffset += 6;
+      
+      // spiral
+      deobfuscationContext.visitAttributeName(attributeName);
+      
       // The tests are sorted in decreasing frequency order (based on frequencies observed on
       // typical classes).
       if (Constants.SOURCE_FILE.equals(attributeName)) {
@@ -568,11 +575,13 @@ public class ClassReader {
       }
       currentAttributeOffset += attributeLength;
     }
+    
+    int classVersion = readInt(cpInfoOffsets[1] - 7);
 
     // Visit the class declaration. The minor_version and major_version fields start 6 bytes before
     // the first constant pool entry, which itself starts at cpInfoOffsets[1] - 1 (by definition).
     classVisitor.visit(
-        readInt(cpInfoOffsets[1] - 7), accessFlags, thisClass, signature, superClass, interfaces);
+    	classVersion, accessFlags, thisClass, signature, superClass, interfaces);
 
     // Visit the SourceFile and SourceDebugExtenstion attributes.
     if ((parsingOptions & SKIP_DEBUG) == 0
@@ -746,7 +755,14 @@ public class ClassReader {
     int methodsCount = readUnsignedShort(currentOffset);
     currentOffset += 2;
     while (methodsCount-- > 0) {
-      currentOffset = readMethod(classVisitor, context, currentOffset);
+      currentOffset = readMethod(classVisitor, context, currentOffset, deobfuscationContext);
+    }
+    
+    // spiral
+    if (deobfuscationContext.suggestedVersionAsInt() > classVersion) {
+    	System.out.println(String.format("Suggested a higher class version, classVersion=%d, suggestedClassVersion=%d",
+    		classVersion, deobfuscationContext.suggestedVersionAsInt()));
+    	classVisitor.visit(deobfuscationContext.suggestedVersionAsInt(), accessFlags, thisClass, signature, superClass, interfaces);    	
     }
 
     // Visit the end of the class.
@@ -1251,7 +1267,7 @@ public class ClassReader {
    * @return the offset of the first byte following the method_info structure.
    */
   private int readMethod(
-      final ClassVisitor classVisitor, final Context context, final int methodInfoOffset) {
+      final ClassVisitor classVisitor, final Context context, final int methodInfoOffset, final DeobfuscationContext deobfuscationContext) {
     char[] charBuffer = context.charBuffer;
 
     // Read the access_flags, name_index and descriptor_index fields.
@@ -1303,6 +1319,10 @@ public class ClassReader {
       String attributeName = readUTF8(currentOffset, charBuffer);
       int attributeLength = readInt(currentOffset + 2);
       currentOffset += 6;
+      
+      // spiral
+      deobfuscationContext.visitAttributeName(attributeName);
+      
       // The tests are sorted in decreasing frequency order (based on frequencies observed on
       // typical classes).
       if (Constants.CODE.equals(attributeName)) {
@@ -1519,7 +1539,7 @@ public class ClassReader {
     // Visit the Code attribute.
     if (codeOffset != 0) {
       methodVisitor.visitCode();
-      readCode(methodVisitor, context, codeOffset);
+      readCode(methodVisitor, context, codeOffset, deobfuscationContext);
     }
 
     // Visit the end of the method.
@@ -1540,7 +1560,7 @@ public class ClassReader {
    *     its attribute_name_index and attribute_length fields.
    */
   private void readCode(
-      final MethodVisitor methodVisitor, final Context context, final int codeOffset) {
+      final MethodVisitor methodVisitor, final Context context, final int codeOffset, final DeobfuscationContext deobfuscationContext) {
     int currentOffset = codeOffset;
 
     // Read the max_stack, max_locals and code_length fields.
@@ -1551,10 +1571,12 @@ public class ClassReader {
     // now that I think about it, perhaps, could it be that placing
     // some unused out of range offsets in class files is some obfuscation technique?
     // final int spiral_extra_space = 500; // perhaps this one won't be so easy
-    final int maxStack = readUnsignedShort(currentOffset) /*+ spiral_extra_space*/;
+    final int maxStackReal = readUnsignedShort(currentOffset);
+    final int maxStack = maxStackReal /*+ spiral_extra_space*/;
     // final int maxLocals = readUnsignedShort(currentOffset + 2);
     // some class declares 5 but uses 6 down the line
-    final int maxLocals = readUnsignedShort(currentOffset + 2)*2  /*+ spiral_extra_space*/;
+    final int maxLocalsReal = readUnsignedShort(currentOffset + 2);
+    final int maxLocals = maxLocalsReal*2  /*+ spiral_extra_space*/;
     final int codeLength = readInt(currentOffset + 4);
     currentOffset += 8;
     if (codeLength > classFileBuffer.length - currentOffset) {
@@ -1912,6 +1934,12 @@ public class ClassReader {
       // Read the attribute_info's attribute_name and attribute_length fields.
       String attributeName = readUTF8(currentOffset, charBuffer);
       int attributeLength = readInt(currentOffset + 2);
+      
+      // spiral
+      System.out.println(String.format("Reading attribute, offset=%d, length=%d, name=%s",
+    		  currentOffset, attributeLength, attributeName));
+      deobfuscationContext.visitAttributeName(attributeName);
+      
       currentOffset += 6;
       if (Constants.LOCAL_VARIABLE_TABLE.equals(attributeName)) {
         if ((context.parsingOptions & SKIP_DEBUG) == 0) {
@@ -2074,8 +2102,13 @@ public class ClassReader {
         (context.parsingOptions & EXPAND_ASM_INSNS) == 0 ? Constants.WIDE_JUMP_OPCODE_DELTA : 0;
 
     // spiral
-    System.out.println(String.format("Stack map table, starts=%d, ends=%d, entries=%d",
-    	stackMapFrameOffset, stackMapTableEndOffset, stackMapTableEntriesCount));
+    System.out.println(String.format("Reading bytecode, stackMapFrameOffset=%d, stackMapTableEndOffset=%d, stackMapTableEntriesCount=%d" +
+    	", maxStackReal=%d, maxLocalsReal=%d, codeLength=%d",
+    	stackMapFrameOffset, stackMapTableEndOffset, stackMapTableEntriesCount, maxStackReal, maxLocalsReal, codeLength));
+
+    // spiral
+    int visitedStackMapFrames = 0;
+    
     currentOffset = bytecodeStartOffset;
     while (currentOffset < bytecodeEndOffset) {
       final int currentBytecodeOffset = currentOffset - bytecodeStartOffset;
@@ -2085,7 +2118,7 @@ public class ClassReader {
       if (currentLabel != null) {
         currentLabel.accept(methodVisitor, (context.parsingOptions & SKIP_DEBUG) == 0);
       }
-
+      
       // Visit the stack map frame for this bytecode offset, if any.
       while (stackMapFrameOffset != 0
           && (context.currentFrameOffset == currentBytecodeOffset
@@ -2113,9 +2146,11 @@ public class ClassReader {
           insertFrame = false;
         }
         if (stackMapFrameOffset < stackMapTableEndOffset) {
+        	++visitedStackMapFrames;
           System.out.println("Reading stack map frame at offset " + stackMapFrameOffset);
           stackMapFrameOffset =
-              readStackMapFrame(stackMapFrameOffset, stackMapTableEndOffset, compressedFrames, expandFrames, context);
+              readStackMapFrame(stackMapFrameOffset, stackMapTableEndOffset, compressedFrames, expandFrames, context,
+            		  maxStackReal, maxLocalsReal, codeLength);
         } else {
           stackMapFrameOffset = 0;
         }
@@ -2583,6 +2618,12 @@ public class ClassReader {
                 invisibleTypeAnnotationOffsets, ++currentInvisibleTypeAnnotationIndex);
       }
     }
+    
+    // spiral
+    String status = visitedStackMapFrames != stackMapTableEntriesCount ? " (stack map frames mismatch)" : "";
+    System.out.println(String.format("Finished reading bytecode, visitedStackMapFrames=%d, stackMapTableEntriesCount=%d%s",
+  		  visitedStackMapFrames, stackMapTableEntriesCount, status));
+    
     if (labels[codeLength] != null) {
       methodVisitor.visitLabel(labels[codeLength]);
     }
@@ -3452,21 +3493,26 @@ public class ClassReader {
       final int stackMapTableEndOffset,
       final boolean compressed,
       final boolean expand,
-      final Context context) {
+      final Context context,
+      final int maxStack,
+      final int maxLocals,
+      final int maxBytecode) {
     int currentOffset = stackMapFrameOffset;
     final char[] charBuffer = context.charBuffer;
     final Label[] labels = context.currentMethodLabels;
     int frameType;
     if (compressed) {
     	// spiral
-    	if (currentOffset >= stackMapTableEndOffset) {
-    		// continue parsing attributes ignoring the broken stack_map_frame
-    		return 0;
-    	}
-    	if (stackMapFrameOutOfBounds(stackMapFrameOffset, stackMapTableEndOffset)) {
+    	while (true) {
+        	if (!stackMapFrameOutOfBounds(currentOffset, stackMapTableEndOffset)) {
+        		break;
+        	}
     		System.out.println(String.format("Couldn't parse stack frame at %d, retrying", currentOffset));
     		// try parsing frame from the next byte
-    		return currentOffset + 1;
+    		++currentOffset;
+    		if (currentOffset >= stackMapTableEndOffset) {
+    			return 0;
+    		}
     	}
         
       // Read the frame_type field.
@@ -3565,7 +3611,7 @@ public class ClassReader {
         context.currentFrameLocalCount = numberOfLocals;
         for (int local = 0; local < numberOfLocals; ++local) {
         	// spiral
-        	System.out.println(String.format("    reading verification info, offset=%d", currentOffset));
+        	System.out.println(String.format("    reading local verification info, offset=%d", currentOffset));
           currentOffset =
               readVerificationTypeInfo(
                   currentOffset, context.currentFrameLocalTypes, local, charBuffer, labels);
@@ -3579,7 +3625,7 @@ public class ClassReader {
         context.currentFrameStackCount = numberOfStackItems;
         for (int stack = 0; stack < numberOfStackItems; ++stack) {
         	// spiral
-        	System.out.println(String.format("    reading verification info, offset=%d", currentOffset));
+        	System.out.println(String.format("    reading stack verification info, offset=%d", currentOffset));
           currentOffset =
               readVerificationTypeInfo(
                   currentOffset, context.currentFrameStackTypes, stack, charBuffer, labels);
@@ -3592,9 +3638,15 @@ public class ClassReader {
     // shouldn't offsetDelta be able to overflow as unsigned?
     offsetDelta = (offsetDelta + 1) & 0xffff;
     context.currentFrameOffset += offsetDelta;
-    System.out.println("Creating label at " + context.currentFrameOffset + " lables size is "
-    		+ labels.length + " delta is " + offsetDelta + " frame type is  " + frameType);
+    
+    String status = "----";
+    if (context.currentFrameStackCount > maxStack) { status += " (stack variables out of reach)"; }
+    if (context.currentFrameLocalCount > maxLocals) { status += " (local variables out of reach)"; }
+    if (context.currentFrameOffset > maxBytecode) { status += " (labels out of reach)"; }
 
+    System.out.println("Creating label at " + context.currentFrameOffset + " lables size is "
+    		+ labels.length + " delta is " + offsetDelta + " frame type is  " + frameType + status);
+    
     // context.currentFrameOffset += offsetDelta + 1;
     createLabel(context.currentFrameOffset, labels);
     return currentOffset;
@@ -3624,7 +3676,8 @@ public class ClassReader {
     int tag = classFileBuffer[currentOffset++] & 0xFF;
     
     // spiral
-    System.out.println(String.format("Read tag=%d, index=%d, frame_length=%d", tag, index, frame.length));
+    String outOfReach = index >= frame.length ? " (type info out of reach)" : "";
+    System.out.println(String.format("Read tag=%d, index=%d, frame_length=%d%s", tag, index, frame.length, outOfReach));
     if (index >= frame.length) {
     	// approach n. 1: drop the entry
     	if (tag == Frame.ITEM_OBJECT || tag == Frame.ITEM_UNINITIALIZED) {
