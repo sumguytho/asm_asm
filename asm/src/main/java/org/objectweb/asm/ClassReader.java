@@ -452,12 +452,15 @@ public class ClassReader {
     context.parsingOptions = parsingOptions;
     context.charBuffer = new char[maxStringLength];
 
+    // spiral
+    System.out.print("\n\n");
+    
     // Read the access_flags, this_class, super_class, interface_count and interfaces fields.
     char[] charBuffer = context.charBuffer;
     int currentOffset = header;
     int accessFlags = readUnsignedShort(currentOffset);
     String thisClass = readClass(currentOffset + 2, charBuffer);
-    String superClass = readClass(currentOffset + 4, charBuffer);
+    final String superClass = readClass(currentOffset + 4, charBuffer);
     String[] interfaces = new String[readUnsignedShort(currentOffset + 6)];
     currentOffset += 8;
     for (int i = 0; i < interfaces.length; ++i) {
@@ -505,7 +508,7 @@ public class ClassReader {
     
     // spiral
     DeobfuscationContext deobfuscationContext = new DeobfuscationContext();
-
+    
     int currentAttributeOffset = getFirstAttributeOffset();
     for (int i = readUnsignedShort(currentAttributeOffset - 2); i > 0; --i) {
       // Read the attribute_info's attribute_name and attribute_length fields.
@@ -574,6 +577,10 @@ public class ClassReader {
         attributes = attribute;
       }
       currentAttributeOffset += attributeLength;
+    }
+    
+    if (signature != null && thisClass != null && signature.indexOf(thisClass) != -1) {
+    	System.out.println(String.format("Cyclic inheritance detected, thisClass=%s, signature=%s", thisClass, signature));
     }
     
     int classVersion = readInt(cpInfoOffsets[1] - 7);
@@ -760,7 +767,7 @@ public class ClassReader {
     
     // spiral
     if (deobfuscationContext.suggestedVersionAsInt() > classVersion) {
-    	System.out.println(String.format("Suggested a higher class version, classVersion=%d, suggestedClassVersion=%d",
+    	System.out.println(String.format("Suggested a higher class version, classVersion=%x, suggestedClassVersion=%x",
     		classVersion, deobfuscationContext.suggestedVersionAsInt()));
     	classVisitor.visit(deobfuscationContext.suggestedVersionAsInt(), accessFlags, thisClass, signature, superClass, interfaces);    	
     }
