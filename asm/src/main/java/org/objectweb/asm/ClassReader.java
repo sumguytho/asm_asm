@@ -765,8 +765,14 @@ public class ClassReader {
       currentOffset = readMethod(classVisitor, context, currentOffset, deobfuscationContext);
     }
     
+    final int classVersionMajor = classVersion & 0xffff;
+    final int classVersionMinor = classVersion >> 16;
+    
     // spiral
-    if (deobfuscationContext.suggestedVersionAsInt() > classVersion) {
+    if (deobfuscationContext.suggestedMajorVersion > classVersionMajor ||
+    	deobfuscationContext.suggestedMajorVersion == classVersionMajor &&
+    	deobfuscationContext.suggestedMinorVersion > classVersionMinor
+    ) {
     	System.out.println(String.format("Suggested a higher class version, classVersion=%x, suggestedClassVersion=%x",
     		classVersion, deobfuscationContext.suggestedVersionAsInt()));
     	classVisitor.visit(deobfuscationContext.suggestedVersionAsInt(), accessFlags, thisClass, signature, superClass, interfaces);    	
