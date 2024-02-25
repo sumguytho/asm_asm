@@ -31,6 +31,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
+import org.objectweb.asm.signature.SignatureReader;
+import org.objectweb.asm.signature.SignatureWriter;
+
 /**
  * A parser to make a {@link ClassVisitor} visit a ClassFile structure, as defined in the Java
  * Virtual Machine Specification (JVMS). This class parses the ClassFile content and calls the
@@ -580,11 +583,20 @@ public class ClassReader {
     }
     
     if (signature != null && thisClass != null && signature.indexOf(thisClass) != -1) {
-    	System.out.println(String.format("Cyclic inheritance detected, thisClass=%s, signature=%s", thisClass, signature));
+    	System.out.println(String.format("Potential cyclic inheritance detected, thisClass=%s, signature=%s", thisClass, signature));
+    	SignatureWriter writer = new SignatureWriter();
+    	FixCyclicSignatureVisitor fix = new FixCyclicSignatureVisitor(thisClass, writer);
+    	new SignatureReader(signature).accept(fix);
+    	final String newSignature = writer.toString();
+    	final String signatureChanged = signature.equals(newSignature) ? "no" : "yes";
+    	System.out.println(String.format("Translated cyclic signature, newSignature=%s, signatureChanged=%s", newSignature, signatureChanged));
+    	signature = newSignature;
     }
     
     int classVersion = readInt(cpInfoOffsets[1] - 7);
 
+    // TODO: remove this call, it sets invalid version, hopefully nothing relies on this information
+    // prior to further parsing
     // Visit the class declaration. The minor_version and major_version fields start 6 bytes before
     // the first constant pool entry, which itself starts at cpInfoOffsets[1] - 1 (by definition).
     classVisitor.visit(
