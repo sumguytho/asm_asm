@@ -15,6 +15,14 @@ public final class DeobfuscationContext {
 	public int suggestedMinorVersion;
 	
 	/**
+	 * Some frames use more locals / stack than what they declare, actual max counts
+	 * should be figured out by traversing stack map frames.
+	 */
+	public int maxLocals;
+	public int maxStack;
+	public int maxLabels;
+	
+	/**
 	 * Updates suggested minor and major version according to attribute encountered.
 	 */
 	public void visitAttributeName(final String attributeName) {
@@ -100,5 +108,29 @@ public final class DeobfuscationContext {
 	 */
 	public int suggestedVersionAsInt() {
 		return (suggestedMajorVersion & 0xffff) | (suggestedMinorVersion << 16);
+	}
+	
+	public void resetMaxLocals() {
+		maxLocals = 0;
+	}
+	
+	public void resetMaxStack() {
+		maxStack = 0;
+	}
+	
+	public void resetMaxLabels() {
+		maxLabels = 0;
+	}
+	
+	public void setMaxLocalsMonotonic(final int maxLocals) {
+		this.maxLocals = maxLocals > this.maxLocals ? maxLocals : this.maxLocals; 
+	}
+	
+	public void setMaxStackMonotonic(final int maxStack) {
+		this.maxStack = maxStack > this.maxStack ? maxStack : this.maxStack; 
+	}
+	
+	public void setMaxLabelsMonotonic(final int maxLabels) {
+		this.maxLabels = maxLabels > this.maxLabels ? maxLabels : this.maxLabels; 
 	}
 }

@@ -53,9 +53,9 @@ public class FixCyclicSignatureVisitor extends SignatureVisitor {
 					sv.visitSuperclass();
 				}
 			}
+			visitingSuperclass = false;
+			visitingSuperinterface = false;
 		}
-		visitingSuperclass = false;
-		visitingSuperinterface = false;
 
 		sv.visitClassType(name);
 	}
@@ -117,6 +117,9 @@ public class FixCyclicSignatureVisitor extends SignatureVisitor {
 		return this;
 	}
 
+	// TODO: do I need to return a proxy class so that I can later pretend it was
+	// the visitor from sv that was returned from this method? The visitor from
+	// sv.visitSuperclass call may potentitally introduce extra context through closure.
 	@Override
 	public SignatureVisitor visitSuperclass() {
 		System.out.println(String.format("FixCyclicSignatureVisitor.visitSuperclass"));

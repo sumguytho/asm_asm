@@ -45,11 +45,6 @@ import org.objectweb.asm.signature.SignatureWriter;
  * @author Eugene Kuleshov
  */
 public class ClassReader {
-	
-  /**
-   * My way of marking bad assumption so that I can come back to them later.
-   */
-  private static final boolean BAD_ASSUMPTION = false;
 
   /**
    * A flag to skip the Code attributes. If this flag is set the Code attributes are neither parsed
@@ -1591,17 +1586,8 @@ public class ClassReader {
     // Read the max_stack, max_locals and code_length fields.
     final byte[] classBuffer = classFileBuffer;
     final char[] charBuffer = context.charBuffer;
-    // spiral
-    // maxStack doesn't check out for some reason
-    // now that I think about it, perhaps, could it be that placing
-    // some unused out of range offsets in class files is some obfuscation technique?
-    // final int spiral_extra_space = 500; // perhaps this one won't be so easy
-    final int maxStackReal = readUnsignedShort(currentOffset);
-    final int maxStack = maxStackReal /*+ spiral_extra_space*/;
-    // final int maxLocals = readUnsignedShort(currentOffset + 2);
-    // some class declares 5 but uses 6 down the line
-    final int maxLocalsReal = readUnsignedShort(currentOffset + 2);
-    final int maxLocals = maxLocalsReal*2  /*+ spiral_extra_space*/;
+    final int maxStackDeclared = readUnsignedShort(currentOffset);
+    final int maxLocalsDeclared = readUnsignedShort(currentOffset + 2);
     final int codeLength = readInt(currentOffset + 4);
     currentOffset += 8;
     if (codeLength > classFileBuffer.length - currentOffset) {
@@ -2054,10 +2040,57 @@ public class ClassReader {
       }
       currentOffset += attributeLength;
     }
+    
 
+    int maxLocals = maxLocalsDeclared;
+    int maxStack = maxStackDeclared;
     // Initialize the context fields related to stack map frames, and generate the first
     // (implicit) stack map frame, if needed.
     final boolean expandFrames = (context.parsingOptions & EXPAND_FRAMES) != 0;
+    // figure out actual maxStack and maxLocals
+    if (stackMapFrameOffset != 0) {
+    	final int stackMapFrameOffsetSaved = stackMapFrameOffset;
+    	
+    	deobfuscationContext.resetMaxLocals();
+    	deobfuscationContext.resetMaxStack();
+    	deobfuscationContext.setMaxLocalsMonotonic(maxLocals);
+    	deobfuscationContext.setMaxStackMonotonic(maxStack);
+    	
+    	context.currentFrameOffset = -1;
+    	context.currentFrameType = 0;
+    	context.currentFrameLocalCount = 0;
+    	context.currentFrameLocalCountDelta = 0;
+    	context.currentFrameLocalTypes = null;
+    	context.currentFrameStackCount = 0;
+    	context.currentFrameStackTypes = null;
+    	
+        if (expandFrames) {
+        	context.currentFrameLocalCount = computeImplicitFrameLocals(context);
+        	deobfuscationContext.setMaxLocalsMonotonic(context.currentFrameLocalCount);
+        }
+    	
+        while (stackMapFrameOffset != 0) {
+        	if (stackMapFrameOffset < stackMapTableEndOffset) {
+        		stackMapFrameOffset =
+        				readStackMapFrame(stackMapFrameOffset, stackMapTableEndOffset, compressedFrames, expandFrames, context,
+        						maxStackDeclared, maxLocalsDeclared, codeLength, deobfuscationContext, true);
+        	} else {
+        		stackMapFrameOffset = 0;
+        	}
+        }
+        String status = "Calculating used stack and locals";
+        status += String.format(" (maxLocalsDeclared=%d, maxLocals=%d)", maxLocalsDeclared, deobfuscationContext.maxLocals);
+        status += String.format(" (maxStackDeclared=%d, maxStack=%d)", maxStackDeclared, deobfuscationContext.maxStack);
+        if (status.length() > 0) {
+        	System.out.println(status);
+        }
+        
+    	maxLocals = deobfuscationContext.maxLocals;
+    	maxStack = deobfuscationContext.maxStack;
+        
+    	stackMapFrameOffset = stackMapFrameOffsetSaved;
+    }
+    
     if (stackMapFrameOffset != 0) {
       // The bytecode offset of the first explicit frame is not offset_delta + 1 but only
       // offset_delta. Setting the implicit frame offset to -1 allows us to use of the
@@ -2129,7 +2162,7 @@ public class ClassReader {
     // spiral
     System.out.println(String.format("Reading bytecode, stackMapFrameOffset=%d, stackMapTableEndOffset=%d, stackMapTableEntriesCount=%d" +
     	", maxStackReal=%d, maxLocalsReal=%d, codeLength=%d",
-    	stackMapFrameOffset, stackMapTableEndOffset, stackMapTableEntriesCount, maxStackReal, maxLocalsReal, codeLength));
+    	stackMapFrameOffset, stackMapTableEndOffset, stackMapTableEntriesCount, maxStack, maxLocals, codeLength));
 
     // spiral
     int visitedStackMapFrames = 0;
@@ -2175,7 +2208,7 @@ public class ClassReader {
           System.out.println("Reading stack map frame at offset " + stackMapFrameOffset);
           stackMapFrameOffset =
               readStackMapFrame(stackMapFrameOffset, stackMapTableEndOffset, compressedFrames, expandFrames, context,
-            		  maxStackReal, maxLocalsReal, codeLength);
+            		  maxStackDeclared, maxLocalsDeclared, codeLength, deobfuscationContext, false);
         } else {
           stackMapFrameOffset = 0;
         }
@@ -3353,6 +3386,63 @@ public class ClassReader {
   }
 
   /**
+   * Computes the implicit frame of the method currently being parsed (as defined in the given
+   * {@link Context}) and stores it in the given context.
+   *
+   * @param context information about the class being parsed.
+   */
+  private int computeImplicitFrameLocals(final Context context) {
+    String methodDescriptor = context.currentMethodDescriptor;
+    int numLocal = 0;
+    if ((context.currentMethodAccessFlags & Opcodes.ACC_STATIC) == 0) {
+        // one for 'this'
+    	numLocal++;
+    }
+    // Parse the method descriptor, one argument type descriptor at each iteration. Start by
+    // skipping the first method descriptor character, which is always '('.
+    int currentMethodDescritorOffset = 1;
+    boolean descriptorParsed = false;
+    while (!descriptorParsed) {
+      switch (methodDescriptor.charAt(currentMethodDescritorOffset++)) {
+        case 'Z':
+        case 'C':
+        case 'B':
+        case 'S':
+        case 'I':
+        case 'F':
+        case 'J':
+        case 'D':
+          numLocal++;
+          break;
+        case '[':
+          while (methodDescriptor.charAt(currentMethodDescritorOffset) == '[') {
+            ++currentMethodDescritorOffset;
+          }
+          if (methodDescriptor.charAt(currentMethodDescritorOffset) == 'L') {
+            ++currentMethodDescritorOffset;
+            while (methodDescriptor.charAt(currentMethodDescritorOffset) != ';') {
+              ++currentMethodDescritorOffset;
+            }
+          }
+          numLocal++;
+          currentMethodDescritorOffset++;
+          break;
+        case 'L':
+          while (methodDescriptor.charAt(currentMethodDescritorOffset) != ';') {
+            ++currentMethodDescritorOffset;
+          }
+          numLocal++;
+          currentMethodDescritorOffset++;
+          break;
+        default:
+          descriptorParsed = true;
+          break;
+      }
+    }
+    return numLocal;
+  }
+
+  /**
    * Reads a JVMS 'verification_type_info' structure at {@link verificationTypeInfoOffset} and checks whether
    * it is valid and breaches {@link verificationTypeInfoEndOffset}.
    *
@@ -3521,7 +3611,9 @@ public class ClassReader {
       final Context context,
       final int maxStack,
       final int maxLocals,
-      final int maxBytecode) {
+      final int maxBytecode,
+      final DeobfuscationContext deobfuscationContext,
+      final boolean dryRun) {
     int currentOffset = stackMapFrameOffset;
     final char[] charBuffer = context.charBuffer;
     final Label[] labels = context.currentMethodLabels;
@@ -3542,31 +3634,6 @@ public class ClassReader {
         
       // Read the frame_type field.
       frameType = classFileBuffer[currentOffset++] & 0xFF;
-	  
-      // I was wrong because I thought there were limited cases of padding getting in the way
-      // and I can just cheat my way through it but it seems there is no other way than
-      // just try parsing frames until we are out of StackMapTable bytes
-      if (BAD_ASSUMPTION) {
-  	    // spiral
-  	    // remove 0xff padding on full_frame entries
-  	    if (frameType == Frame.FULL_FRAME) {
-  	    	// wrong assumption: it seems full frames are always padded with 0xff until they are 2 aligned
-
-  	    	// so far I've seen either one byte padding, none or padding until the table end
-  	    	// -1 since it was added while reading frame type
-  	        if ((currentOffset - 1 & 1) != 0 && (classFileBuffer[currentOffset] & 0xff) == 0xff) {
-  	        	++currentOffset;
-  	        }
-  	        int currentOffsetPadding = currentOffset;
-  	        // if it's all 0xff until the stack_map_table end then it's padding
-  	    	while (currentOffsetPadding < stackMapTableEndOffset && (classFileBuffer[currentOffsetPadding] & 0xff) == 0xff) {
-  	    		++currentOffsetPadding;
-  	    	}
-  	        if (currentOffsetPadding >= stackMapTableEndOffset) {
-  	    		return 0;
-  	    	}
-  	    }
-      }
     } else {
       frameType = Frame.FULL_FRAME;
       context.currentFrameOffset = -1;
@@ -3575,13 +3642,18 @@ public class ClassReader {
     context.currentFrameLocalCountDelta = 0;
     if (frameType < Frame.SAME_LOCALS_1_STACK_ITEM_FRAME) {
       offsetDelta = frameType;
+      final int newOffset = (context.currentFrameOffset + offsetDelta + 1) & 0xffff;
+      if (newOffset > stackMapTableEndOffset) {
+    	  // the same frame which ends beyond stack map table, just omit it
+    	  return 0;
+      }
       context.currentFrameType = Opcodes.F_SAME;
       context.currentFrameStackCount = 0;
     } else if (frameType < Frame.RESERVED) {
       offsetDelta = frameType - Frame.SAME_LOCALS_1_STACK_ITEM_FRAME;
       currentOffset =
           readVerificationTypeInfo(
-              currentOffset, context.currentFrameStackTypes, 0, charBuffer, labels);
+              currentOffset, context.currentFrameStackTypes, 0, charBuffer, labels, dryRun);
       context.currentFrameType = Opcodes.F_SAME1;
       context.currentFrameStackCount = 1;
     } else if (frameType >= Frame.SAME_LOCALS_1_STACK_ITEM_FRAME_EXTENDED) {
@@ -3590,7 +3662,7 @@ public class ClassReader {
       if (frameType == Frame.SAME_LOCALS_1_STACK_ITEM_FRAME_EXTENDED) {
         currentOffset =
             readVerificationTypeInfo(
-                currentOffset, context.currentFrameStackTypes, 0, charBuffer, labels);
+                currentOffset, context.currentFrameStackTypes, 0, charBuffer, labels, dryRun);
         context.currentFrameType = Opcodes.F_SAME1;
         context.currentFrameStackCount = 1;
       } else if (frameType >= Frame.CHOP_FRAME && frameType < Frame.SAME_FRAME_EXTENDED) {
@@ -3606,7 +3678,7 @@ public class ClassReader {
         for (int k = frameType - Frame.SAME_FRAME_EXTENDED; k > 0; k--) {
           currentOffset =
               readVerificationTypeInfo(
-                  currentOffset, context.currentFrameLocalTypes, local++, charBuffer, labels);
+                  currentOffset, context.currentFrameLocalTypes, local++, charBuffer, labels, dryRun);
         }
         context.currentFrameType = Opcodes.F_APPEND;
         context.currentFrameLocalCountDelta = frameType - Frame.SAME_FRAME_EXTENDED;
@@ -3614,18 +3686,6 @@ public class ClassReader {
         context.currentFrameStackCount = 0;
       } else {
         final int numberOfLocals = readUnsignedShort(currentOffset);
-        
-        // wasn't even correct in the first place, I should have checked offset delta,
-        // it worked as I intended accidentally
-        if (BAD_ASSUMPTION) {
-            // spiral
-            // if a full_frame is followed by another 0xff it's most likely just padding
-            // because, realistically, how many frames actually use this many variables?
-            if (numberOfLocals >= 0xff00) {
-            	// just try to parse this padding byte as full_frame instead
-            	return currentOffset;
-            }
-        }
         
         // spiral
         System.out.println(String.format("Reading full stack frame, numberOfLocals=%d", numberOfLocals));
@@ -3639,7 +3699,7 @@ public class ClassReader {
         	System.out.println(String.format("    reading local verification info, offset=%d", currentOffset));
           currentOffset =
               readVerificationTypeInfo(
-                  currentOffset, context.currentFrameLocalTypes, local, charBuffer, labels);
+                  currentOffset, context.currentFrameLocalTypes, local, charBuffer, labels, dryRun);
         }
         final int numberOfStackItems = readUnsignedShort(currentOffset);
         currentOffset += 2;
@@ -3653,7 +3713,7 @@ public class ClassReader {
         	System.out.println(String.format("    reading stack verification info, offset=%d", currentOffset));
           currentOffset =
               readVerificationTypeInfo(
-                  currentOffset, context.currentFrameStackTypes, stack, charBuffer, labels);
+                  currentOffset, context.currentFrameStackTypes, stack, charBuffer, labels, dryRun);
         }
       }
     } else {
@@ -3668,12 +3728,18 @@ public class ClassReader {
     if (context.currentFrameStackCount > maxStack) { status += " (stack variables out of reach)"; }
     if (context.currentFrameLocalCount > maxLocals) { status += " (local variables out of reach)"; }
     if (context.currentFrameOffset > maxBytecode) { status += " (labels out of reach)"; }
+    if (frameType == Frame.FULL_FRAME && offsetDelta == 0) { status += " (full_frame with offsetDelta=0)"; }
+    
+    deobfuscationContext.setMaxLocalsMonotonic(context.currentFrameLocalCount);
+    deobfuscationContext.setMaxStackMonotonic(context.currentFrameStackCount);
 
     System.out.println("Creating label at " + context.currentFrameOffset + " lables size is "
     		+ labels.length + " delta is " + offsetDelta + " frame type is  " + frameType + status);
     
     // context.currentFrameOffset += offsetDelta + 1;
-    createLabel(context.currentFrameOffset, labels);
+    if(!dryRun) {
+    	createLabel(context.currentFrameOffset, labels);    	
+    }
     return currentOffset;
   }
 
@@ -3696,21 +3762,15 @@ public class ClassReader {
       final Object[] frame,
       final int index,
       final char[] charBuffer,
-      final Label[] labels) {
+      final Label[] labels,
+      final boolean dryRun) {
     int currentOffset = verificationTypeInfoOffset;
     int tag = classFileBuffer[currentOffset++] & 0xFF;
-    
-    // spiral
-    String outOfReach = index >= frame.length ? " (type info out of reach)" : "";
-    System.out.println(String.format("Read tag=%d, index=%d, frame_length=%d%s", tag, index, frame.length, outOfReach));
-    if (index >= frame.length) {
-    	// approach n. 1: drop the entry
-    	if (tag == Frame.ITEM_OBJECT || tag == Frame.ITEM_UNINITIALIZED) {
-    		currentOffset += 2;
-    	}
-    	return currentOffset;
-    }
 
+    if (dryRun) {
+    	return currentOffset + (tag == Frame.ITEM_OBJECT || tag == Frame.ITEM_UNINITIALIZED ? 2 : 0);
+    }
+    
     switch (tag) {
       case Frame.ITEM_TOP:
         frame[index] = Opcodes.TOP;
