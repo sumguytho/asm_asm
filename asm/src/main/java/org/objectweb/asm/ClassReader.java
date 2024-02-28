@@ -1597,11 +1597,7 @@ public class ClassReader {
     // Read the bytecode 'code' array to create a label for each referenced instruction.
     final int bytecodeStartOffset = currentOffset;
     final int bytecodeEndOffset = currentOffset + codeLength;
-    // spiral
-    // where are those extra label placeholders coming from? how is their total count calculated to begin with?
-    // for now I just don't care
-    final int spiral_extra_labels = 500;
-    final Label[] labels = context.currentMethodLabels = new Label[codeLength + 1 + spiral_extra_labels];
+    final Label[] labels = context.currentMethodLabels = new Label[codeLength + 1];
     System.out.println("Code starts at " + bytecodeStartOffset + " code ends at " + bytecodeEndOffset);
     while (currentOffset < bytecodeEndOffset) {
       final int bytecodeOffset = currentOffset - bytecodeStartOffset;
@@ -3643,7 +3639,9 @@ public class ClassReader {
     if (frameType < Frame.SAME_LOCALS_1_STACK_ITEM_FRAME) {
       offsetDelta = frameType;
       final int newOffset = (context.currentFrameOffset + offsetDelta + 1) & 0xffff;
-      if (newOffset > stackMapTableEndOffset) {
+      System.out.println(String.format("Got same_frame, newOffset=%d, maxBytecode=%d, outOfReach=%s",
+    		  newOffset, maxBytecode, newOffset > maxBytecode ? "yes" : "no"));
+      if (newOffset > maxBytecode) {
     	  // the same frame which ends beyond stack map table, just omit it
     	  return 0;
       }
