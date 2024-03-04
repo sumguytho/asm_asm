@@ -1297,9 +1297,6 @@ public class ClassReader {
     context.currentMethodDescriptor = readUTF8(currentOffset + 4, charBuffer);
     currentOffset += 6;
 
-	// spiral
-	System.out.println(String.format("  visiting method {%s}", context.currentMethodName));
-
     // Read the method attributes (the variables are ordered as in Section 4.7 of the JVMS).
     // Attribute offsets exclude the attribute_name_index and attribute_length fields.
     // - The offset of the Code attribute, or 0.
@@ -1334,6 +1331,11 @@ public class ClassReader {
 
     int attributesCount = readUnsignedShort(currentOffset);
     currentOffset += 2;
+
+	// spiral
+	System.out.println(String.format("  visiting method {%s}, currentOffset=%d, attributesCount=%d, currentMethodDescriptor=%s, currentMethodAccessFlags=%x",
+		context.currentMethodName, currentOffset, attributesCount, context.currentMethodDescriptor, context.currentMethodAccessFlags));
+
     while (attributesCount-- > 0) {
       // Read the attribute_info's attribute_name and attribute_length fields.
       String attributeName = readUTF8(currentOffset, charBuffer);
