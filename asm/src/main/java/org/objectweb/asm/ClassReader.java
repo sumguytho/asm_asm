@@ -3489,8 +3489,8 @@ public class ClassReader {
    *     read.
    * @param verificationTypeInfoEndOffset the end offset which the array shouldn't breach.
    * @param entriesToValidate the amount of valid entries that should be read.
-   * @return the offset that points to location after the array of 'verification_type_info' structures
-   * 	or -1 if {@link entriesToValidate} structures couldn't be read.
+   * @return the offset that points to location after the array of 'verification_type_info' structures or -1
+   * 	if {@link entriesToValidate} structures couldn't be read.
    */
   private int validateMultipleVerificationTypeInfo(
       final int verificationTypeInfoOffset,
@@ -3508,83 +3508,107 @@ public class ClassReader {
   }
 
   /**
-   * A lookahead check to see whether current stack_map_frame entry
-   * breaches the StackMapTable bounaries.
+   * A lookahead check to see whether current stack_map_frame entry, records frame data in
+   * the process that can be accessed through a returned {@link StackFrameLookupResult} structure.
    * 
    * @param stackMapFrameOffset the offset of stack_map_frame in {@link #classFileBuffer}
    * @param stackMapTableEndOffset the offset of the next attribute after StackMapTable in
    * 	{@link #classFileBuffer}
-   * @return whether the bounaries have been breached
+   * @return a {@link StackFrameLookupResult} structure.
    */
-  private boolean stackMapFrameOutOfBounds(
+  private StackFrameLookupResult lookupStackFrame(
 	  final int stackMapFrameOffset,
 	  final int stackMapTableEndOffset
   ) {
+	  StackFrameLookupResult retv = new StackFrameLookupResult();
 	  if (stackMapTableEndOffset - stackMapFrameOffset < 1) {
-		  return true;
+		  return retv;
 	  }
 	  int currentOffset = stackMapFrameOffset;
 	  final int frameType = classFileBuffer[currentOffset++] & 0xff;
+	  retv.frameType = frameType;
 	  if (frameType < Frame.SAME_LOCALS_1_STACK_ITEM_FRAME) {
 		  // same_frame
-		  return false;
+		  retv.offsetDelta = frameType;
+		  retv.isValid = true;
+		  retv.nextFrameOffset = currentOffset;
+		  return retv;
 	  }
 	  else if (frameType < Frame.RESERVED) {
 		  // same_locals_1_stack_item_frame
 		  // one stack item
-		  return validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, 1) < 0;
+		  retv.stackCount = 1;
+		  retv.nextFrameOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, 1);
+		  retv.isValid = retv.nextFrameOffset > 0;
+		  return retv;
 	  }
 	  else if (frameType == Frame.FULL_FRAME) {
 		  // full_frame
 		  // offset_delta + number_of_locals
 		  if (stackMapTableEndOffset - currentOffset < 4) {
-			  return true;
+			  return retv;
 		  }
-		  currentOffset += 2;
-		  int numLocals = readUnsignedShort(currentOffset);
-		  currentOffset += 2;
+		  retv.offsetDelta = readUnsignedShort(currentOffset);
+		  retv.localCount = readUnsignedShort(currentOffset + 2);
+		  currentOffset += 4;
 		  // local variables
-		  currentOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, numLocals);
+		  currentOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, retv.localCount);
 		  if (currentOffset < 0) {
-			  return true;
+			  return retv;
 		  }
 		  // number_of_stack_items
 		  if (stackMapTableEndOffset - currentOffset < 2) {
-			  return true;
+			  return retv;
 		  }
-		  int numStack = readUnsignedShort(currentOffset);
+		  retv.stackCount = readUnsignedShort(currentOffset);
 		  currentOffset += 2;
-		  return validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, numStack) < 0;
+		  retv.nextFrameOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, retv.stackCount);
+		  retv.isValid = retv.nextFrameOffset > 0;
+		  return retv;
 	  }
 	  else if (frameType >= Frame.APPEND_FRAME) {
 		  // append_frame
 		  // offset_delta
 		  if (stackMapTableEndOffset - currentOffset < 2) {
-			  return true;
+			  return retv;
 		  }
+		  retv.offsetDelta = readUnsignedShort(currentOffset);
 		  currentOffset += 2;
-		  int numLocals = frameType - Frame.SAME_FRAME_EXTENDED;
-		  // numLocals local variables
-		  return validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, numLocals) < 0;
+		  retv.localCountDelta = retv.frameType - Frame.SAME_FRAME_EXTENDED;
+		  // local variables
+		  retv.nextFrameOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, retv.localCountDelta);
+		  retv.isValid = retv.nextFrameOffset > 0;
+		  return retv;
 	  }
 	  else if (frameType >= Frame.CHOP_FRAME) {
 		  // same_frame_extended
 		  // chop_frame
 		  // offset_delta
-		  return stackMapTableEndOffset - currentOffset < 2;
+		  if (stackMapTableEndOffset - currentOffset < 2) {
+			  return retv;
+		  }
+		  retv.offsetDelta = readUnsignedShort(currentOffset);
+		  currentOffset += 2;
+		  retv.localCountDelta = Frame.SAME_FRAME_EXTENDED - retv.frameType;
+		  retv.isValid = true;
+		  return retv;
 	  }
 	  else if (frameType == Frame.SAME_LOCALS_1_STACK_ITEM_FRAME_EXTENDED) {
 		  // same_locals_1_stack_item_frame_extended
 		  // offset_delta
 		  if (stackMapTableEndOffset - currentOffset < 2) {
-			  return true;
+			  return retv;
 		  }
+		  retv.offsetDelta = readUnsignedShort(currentOffset);
 		  currentOffset += 2;
 		  // one stack item
-		  return validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, 1) < 0;
+		  retv.stackCount = 1;
+		  retv.nextFrameOffset = validateMultipleVerificationTypeInfo(currentOffset, stackMapTableEndOffset, 1);
+		  retv.isValid = retv.nextFrameOffset > 0;
+		  return retv;
 	  }
 	  // unknown frame type
-	  return true;
+	  return retv;
   }
   
   /**
@@ -3619,7 +3643,7 @@ public class ClassReader {
     if (compressed) {
     	// spiral
     	while (true) {
-        	if (!stackMapFrameOutOfBounds(currentOffset, stackMapTableEndOffset)) {
+        	if (lookupStackFrame(currentOffset, stackMapTableEndOffset).isValid) {
         		break;
         	}
     		System.out.println(String.format("Couldn't parse stack frame at %d, retrying", currentOffset));
@@ -3733,12 +3757,26 @@ public class ClassReader {
     deobfuscationContext.setMaxLocalsMonotonic(context.currentFrameLocalCount);
     deobfuscationContext.setMaxStackMonotonic(context.currentFrameStackCount);
 
+    StackFrameLookupResult nextFrameInfo = lookupStackFrame(currentOffset, stackMapTableEndOffset);
+    if (nextFrameInfo.isValid && nextFrameInfo.offsetDelta == 0) {
+    	// recursively update current frame until no frames with offset_delta = 0 are found
+    	int nextFrameOffset = readStackMapFrame(currentOffset, stackMapTableEndOffset, compressed, expand,
+    		context, maxStack, maxLocals, maxBytecode, deobfuscationContext, dryRun);
+    	// register merged frames as a single full_frame
+    	context.currentFrameLocalCountDelta = context.currentFrameLocalCount;
+    	context.currentFrameType = Opcodes.F_FULL;
+    	// we can't return 0 because this way the frame that was read won't be visited
+    	// (see loop condition for stack_map_table traversal)
+    	currentOffset = nextFrameOffset == 0 ? stackMapTableEndOffset : nextFrameOffset;
+    }
+    
     System.out.println("Creating label at " + context.currentFrameOffset + " lables size is "
     		+ labels.length + " delta is " + offsetDelta + " frame type is  " + frameType + status);
     
     // context.currentFrameOffset += offsetDelta + 1;
+    // label will be created multiple times when merging frames but it's not an issue
     if(!dryRun) {
-    	createLabel(context.currentFrameOffset, labels);    	
+    	createLabel(context.currentFrameOffset, labels);
     }
     return currentOffset;
   }

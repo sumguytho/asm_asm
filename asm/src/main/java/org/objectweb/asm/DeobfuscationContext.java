@@ -26,6 +26,8 @@ public final class DeobfuscationContext {
 	 * Updates suggested minor and major version according to attribute encountered.
 	 */
 	public void visitAttributeName(final String attributeName) {
+		// oh boy, if only there was a better way to collate one value to several other ones
+		// TODO:
 		if (Constants.CONSTANT_VALUE.equals(attributeName)) {
 			setVersionMonotonic(45, 3);
 		} else if (Constants.CODE.equals(attributeName)) {
