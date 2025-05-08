@@ -23,6 +23,13 @@ public final class DeobfuscationContext {
 	public int maxLabels;
 	
 	/**
+	 * Counting resolved stack map frames and stack map frames with offsetDelta=0.
+	 * If all stack map frames have offsetDelta=0 the attribute can (presumably) be omitted altogether.
+	 */
+	public int stackMapFrames;
+	public int zeroOffsetDeltaStackMapFrames;
+	
+	/**
 	 * Updates suggested minor and major version according to attribute encountered.
 	 */
 	public void visitAttributeName(final String attributeName) {

@@ -5,6 +5,7 @@ public class StackFrameLookupResult {
 	boolean isValid;
 	int nextFrameOffset;
 	int frameType;
+	/* offsetDelta is returned as raw value as it appears in a frame. */
 	int offsetDelta;
 	int localCount;
 	int localCountDelta;

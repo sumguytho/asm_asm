@@ -465,7 +465,8 @@ public class ClassWriter extends ClassVisitor {
       final String descriptor,
       final String signature,
       final String[] exceptions) {
-    MethodWriter methodWriter =
+    System.out.println("Visiting method " + name);
+	  MethodWriter methodWriter =
         new MethodWriter(symbolTable, access, name, descriptor, signature, exceptions, compute);
     if (firstMethod == null) {
       firstMethod = methodWriter;

@@ -106,8 +106,9 @@ public class FrameNode extends AbstractInsnNode {
     String localTruncated = "";
     int numLocalMut = numLocal;
     int numStackMut = numStack;
-    // attempted approach: drop the labels
+    // attempted approach: drop labels that are 
     // TODO: resize locals and stack every time there is a mismatch
+    // it's unclear how to populate missing entries
     if (local != null && numLocalMut > local.length) {
     	numLocalMut = local.length;
     	localTruncated = "(truncated)";

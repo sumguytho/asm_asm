@@ -2039,6 +2039,9 @@ public class ClassReader {
       currentOffset += attributeLength;
     }
     
+	deobfuscationContext.zeroOffsetDeltaStackMapFrames = 0;
+	deobfuscationContext.stackMapFrames = 0;
+    
 
     int maxLocals = maxLocalsDeclared;
     int maxStack = maxStackDeclared;
@@ -2088,6 +2091,25 @@ public class ClassReader {
         
     	stackMapFrameOffset = stackMapFrameOffsetSaved;
     }
+    
+    String framesStatus = "ok";
+    if (deobfuscationContext.zeroOffsetDeltaStackMapFrames != 0) {
+    	if (deobfuscationContext.stackMapFrames == deobfuscationContext.zeroOffsetDeltaStackMapFrames) {
+    		framesStatus = "alldelta";
+    	}
+    	else {
+    		framesStatus = "mismatch";
+    	}
+    }
+    System.out.println(String.format("Stack map frames(%s): all=%d, zeroOffsetDelta=%d", framesStatus, deobfuscationContext.stackMapFrames,
+    		deobfuscationContext.zeroOffsetDeltaStackMapFrames));
+    // spiral
+    // all stack map frames have offsetDelta=0, ignore stack map frames attribute
+//    if (deobfuscationContext.stackMapFrames == deobfuscationContext.zeroOffsetDeltaStackMapFrames && deobfuscationContext.stackMapFrames != 0) {
+//    	stackMapFrameOffset = 0;
+//    	stackMapTableEndOffset = 0;
+//    	compressedFrames = true;
+//    }
     
     if (stackMapFrameOffset != 0) {
       // The bytecode offset of the first explicit frame is not offset_delta + 1 but only
@@ -3589,6 +3611,8 @@ public class ClassReader {
 		  }
 		  retv.offsetDelta = readUnsignedShort(currentOffset);
 		  currentOffset += 2;
+		  // TODO: on commit: there was a bug in lookup: next frame for chop_frame wasn't being set
+		  retv.nextFrameOffset = currentOffset;
 		  retv.localCountDelta = Frame.SAME_FRAME_EXTENDED - retv.frameType;
 		  retv.isValid = true;
 		  return retv;
@@ -3642,13 +3666,33 @@ public class ClassReader {
     int frameType;
     if (compressed) {
     	// spiral
+    	// skip frames with offsetDelta=0 and also return early if table end is reached
     	while (true) {
-        	if (lookupStackFrame(currentOffset, stackMapTableEndOffset).isValid) {
-        		break;
+        	StackFrameLookupResult res = lookupStackFrame(currentOffset, stackMapTableEndOffset);
+    		System.out.println(String.format("isValid=%b, nextFrameOffset=%d, frameType=%d, stackMapTableEndOffset=%d",
+					res.isValid, res.nextFrameOffset, res.frameType, stackMapTableEndOffset));
+        	if (res.isValid) {
+        		final int normalizedOffsetDelta = (res.offsetDelta + 1) & 0xffff;
+        		if (normalizedOffsetDelta != 0) {
+        			break;        			
+        		}
+        		else {
+        			System.out.println(String.format("Skipping frame with offsetDelta=0 at %d, trying next frame at %d",
+        					currentOffset, res.nextFrameOffset));
+        			System.out.flush();
+        			if (currentOffset == res.nextFrameOffset) {
+        				throw new RuntimeException();
+        			}
+        			currentOffset = res.nextFrameOffset;
+        			deobfuscationContext.stackMapFrames++;
+        			deobfuscationContext.zeroOffsetDeltaStackMapFrames++;
+        		}
         	}
-    		System.out.println(String.format("Couldn't parse stack frame at %d, retrying", currentOffset));
-    		// try parsing frame from the next byte
-    		++currentOffset;
+        	else {
+        		System.out.println(String.format("Couldn't parse stack frame at %d, retrying at %d", currentOffset, currentOffset+1));
+        		// try parsing frame from the next byte
+        		++currentOffset;	
+        	}
     		if (currentOffset >= stackMapTableEndOffset) {
     			return 0;
     		}
@@ -3748,7 +3792,7 @@ public class ClassReader {
     offsetDelta = (offsetDelta + 1) & 0xffff;
     context.currentFrameOffset += offsetDelta;
     
-    String status = "----";
+    String status = " (no error)";
     if (context.currentFrameStackCount > maxStack) { status += " (stack variables out of reach)"; }
     if (context.currentFrameLocalCount > maxLocals) { status += " (local variables out of reach)"; }
     if (context.currentFrameOffset > maxBytecode) { status += " (labels out of reach)"; }
@@ -3757,20 +3801,16 @@ public class ClassReader {
     deobfuscationContext.setMaxLocalsMonotonic(context.currentFrameLocalCount);
     deobfuscationContext.setMaxStackMonotonic(context.currentFrameStackCount);
 
-    StackFrameLookupResult nextFrameInfo = lookupStackFrame(currentOffset, stackMapTableEndOffset);
-    if (nextFrameInfo.isValid && nextFrameInfo.offsetDelta == 0) {
-    	// recursively update current frame until no frames with offset_delta = 0 are found
-    	int nextFrameOffset = readStackMapFrame(currentOffset, stackMapTableEndOffset, compressed, expand,
-    		context, maxStack, maxLocals, maxBytecode, deobfuscationContext, dryRun);
-    	// register merged frames as a single full_frame
-    	context.currentFrameLocalCountDelta = context.currentFrameLocalCount;
-    	context.currentFrameType = Opcodes.F_FULL;
-    	// we can't return 0 because this way the frame that was read won't be visited
-    	// (see loop condition for stack_map_table traversal)
-    	currentOffset = nextFrameOffset == 0 ? stackMapTableEndOffset : nextFrameOffset;
-    }
+    // spiral
+    // almost certain frames with offsetDelta=0 should be ignored
+    // because otherwise stack count is reset
+	// deobfuscationContext.stackMapFrames++;
+	if (offsetDelta == 0) {
+		deobfuscationContext.zeroOffsetDeltaStackMapFrames++;
+	}
+	deobfuscationContext.stackMapFrames++;
     
-    System.out.println("Creating label at " + context.currentFrameOffset + " lables size is "
+    System.out.println("Frame label (" + (dryRun ? "dry" : "real") +  ") at " + context.currentFrameOffset + " lables size is "
     		+ labels.length + " delta is " + offsetDelta + " frame type is  " + frameType + status);
     
     // context.currentFrameOffset += offsetDelta + 1;
